@@ -1,0 +1,44 @@
+{
+    "filters": [
+        {
+            "name": "TV",
+            "status": "Infos",
+            "key_code": "a",
+            "regex": ".*(?:TV).*",
+            "rule": "OneLine",
+            "is_on": true
+        },
+        {
+            "name": "PLG",
+            "status": "Custom2",
+            "key_code": "z",
+            "regex": "\\[.*(?i:MATCH CRAFT PLG).*\\]",
+            "rule": "OneLine",
+            "is_on": true
+        },
+        {
+            "name": "PLG",
+            "status": "Custom3",
+            "key_code": "t",
+            "regex": "\\[.*(?i:PlgApi).*\\]",
+            "rule": "OneLine",
+            "is_on": true
+        },
+        {
+            "name": "Execs",
+            "status": "Infos",
+            "key_code": "e",
+            "regex": ".*(?:execing).*",
+            "rule": "OneLine",
+            "is_on": true
+        },
+        {
+            "name": "Errors",
+            "status": "Error",
+            "key_code": "r",
+            "regex": "(?i)(?:Error)(?-i)\\W.*",
+            "rule": "OneLine",
+            "is_on": true
+        }
+    ]
+}

@@ -1,0 +1,322 @@
+
+use color_eyre::{
+    eyre::{bail, WrapErr},
+    Result,
+};
+use ratatui::{
+    buffer::Buffer,
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    layout::{Alignment, Rect},
+    prelude::Style,
+    style::Stylize,
+    symbols::border,
+    text::{Line, Text},
+    widgets::{
+        block::{Position, Title},
+        Block, Paragraph, Widget,
+    },
+    Frame,
+};
+use regex::Regex;
+use std::error::Error;
+use std::fmt;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/* fn read_logs() -> Result<()> {
+    // Set up your regex filters here
+    let filters: Vec<str> = vec![
+        Regex::new(r"error:.*").unwrap(),
+        Regex::new(r"warning:.*").unwrap(),
+    ];
+
+    // Attach to the screen session named "cs2server"
+    let mut child = Command::new("screen")
+        .args(&["-S", "cs2server", "-X", "hardcopy", "-"])
+        .stdout(Stdio::piped())
+        .spawn()?;
+
+    let stdout = child.stdout.take().expect("Failed to open stdout");
+    let reader = BufReader::new(stdout);
+
+    let lines_keeps = vec![];
+
+    // Process each line of output
+    for line in reader.lines() {
+        let line = line?;
+        for filter in &filters {
+            if filter.is_match(&line) {
+                lines_keeps.push(line);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+} */
+
+mod errors;
+mod tui;
+
+#[derive(Debug)]
+pub struct App {
+    counter: u8,
+    filters: Vec<Regex>,
+    exit: bool,
+    logs: Vec<String>,
+    last_check: Instant,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            counter: 0,
+            filters: Vec::new(),
+            exit: false,
+            logs: vec!["test1".to_string(), "test2".to_string()],
+            last_check: Instant::now(),
+        }
+    }
+}
+
+impl App {
+    /// runs the application's main loop until the user quits
+    pub fn run(&mut self, terminal: &mut tui::Tui) -> Result<()> {
+        self.init_filters();
+
+        let mut last_content = String::new();
+
+        while !self.exit {
+            let output = Command::new("screen")
+                .args(&["-r", "cs2server", "-X", "hardcopy", "-"])
+                .output()?;
+
+            if output.status.success() {
+                let content = String::from_utf8_lossy(&output.stdout).to_string();
+                if content != last_content {
+                    // Process only the new lines
+                    let new_lines: Vec<&str> =
+                        content.lines().skip(last_content.lines().count()).collect();
+
+                    for line in new_lines {
+                        self.logs.push(line.to_string());
+                    }
+
+                    // Limit the number of stored logs to prevent memory issues
+                    if self.logs.len() > 1000 {
+                        self.logs.drain(0..500);
+                    }
+
+                    last_content = content;
+                }
+            }
+
+            terminal.draw(|frame| self.render_frame(frame))?;
+            self.handle_events().wrap_err("handle events failed")?;
+
+            // Check for new content every 100ms
+            /*  if self.last_check.elapsed() >= Duration::from_millis(100) { */
+
+            /* if output.status.success() {
+                self.logs.push("SUCCESS".to_string());
+
+                let content = String::from_utf8_lossy(&output.stdout).to_string();
+                if content != last_content {
+                    // Process only the new lines
+                    let new_lines: Vec<&str> =
+                        content.lines().skip(last_content.lines().count()).collect();
+
+                    for line in new_lines {
+                        self.logs.push(line.to_string());
+
+                        /* for filter in &self.filters {
+                            if filter.is_match(line) {
+                                break;
+                            }
+                        } */
+                    }
+
+                    // Limit the number of stored logs to prevent memory issues
+                    /* if self.logs.len() > 1000 {
+                        self.logs.drain(0..500);
+                    } */
+
+                    last_content = content;
+                } else {
+                    self.logs.push("FAILED".to_string());
+
+                    let content = String::from_utf8_lossy(&output.stderr).to_string();
+                    self.logs.push(content.to_string());
+                }
+            } */
+            self.last_check = Instant::now();
+        }
+        Ok(())
+    }
+
+    fn init_filters(&mut self) {
+        self.filters.push(Regex::new(r"^\[PlgApi\].*").unwrap());
+        self.filters
+            .push(Regex::new(r"^\[MATCH CRAFT PLG].*").unwrap());
+        self.filters.push(Regex::new(r"^CSSharp:.*").unwrap());
+    }
+
+    fn render_frame(&self, frame: &mut Frame) {
+        frame.render_widget(self, frame.size());
+    }
+
+    fn add_log(&mut self) {
+        self.logs.push("test".to_string());
+    }
+
+    fn exit(&mut self) {
+        self.exit = true;
+    }
+
+    fn increment_counter(&mut self) -> Result<()> {
+        self.counter += 1;
+        if self.counter > 2 {
+            bail!("counter overflow");
+        }
+        Ok(())
+    }
+
+    fn decrement_counter(&mut self) -> Result<()> {
+        self.counter -= 1;
+
+        Ok(())
+    }
+
+    fn handle_events(&mut self) -> Result<()> {
+        match event::read()? {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => self
+                .handle_key_event(key_event)
+                .wrap_err_with(|| format!("handling key event failed:\n{key_event:#?}")),
+            _ => Ok(()),
+        }
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
+        match key_event.code {
+            KeyCode::Char('q') => self.exit(),
+            KeyCode::Char('a') => self.add_log(),
+            KeyCode::Left => self.decrement_counter()?,
+            KeyCode::Right => self.increment_counter()?,
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl Widget for &App {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let title = Title::from(" Easy Console CS2 ".bold());
+        let style = Style::new().yellow();
+
+        let logs_lines: Vec<Line> = self.logs.iter().map(|x| Line::styled(x, style)).collect();
+
+        let instructions = Title::from(Line::from(vec![
+            " Decrement ".into(),
+            "<Left>".blue().bold(),
+            " Increment ".into(),
+            "<Right>".blue().bold(),
+            " Quit ".into(),
+            "<Q> ".blue().bold(),
+        ]));
+        let block = Block::bordered()
+            .title(title.alignment(Alignment::Center))
+            .title(
+                instructions
+                    .alignment(Alignment::Center)
+                    .position(Position::Bottom),
+            )
+            .border_set(border::THICK);
+
+        let counter_text = Text::from(vec![Line::from(vec![
+            "Value: ".into(),
+            self.counter.to_string().yellow(),
+        ])]);
+
+        Paragraph::new(logs_lines)
+            .left_aligned()
+            .block(block)
+            .render(area, buf)
+    }
+}
+
+fn main() -> Result<()> {
+    errors::install_hooks()?;
+    let mut terminal = tui::init()?;
+    App::default().run(&mut terminal);
+    tui::restore()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Style;
+
+    /*  #[test]
+    fn render() {
+        let app = App::default();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 50, 4));
+
+        app.render(buf.area, &mut buf);
+
+        let mut expected = Buffer::with_lines(vec![
+            "┏━━━━━━━━━━━━━ Counter App Tutorial ━━━━━━━━━━━━━┓",
+            "┃                    Value: 0                    ┃",
+            "┃                                                ┃",
+            "┗━ Decrement <Left> Increment <Right> Quit <Q> ━━┛",
+        ]);
+        let title_style = Style::new().bold();
+        let counter_style = Style::new().yellow();
+        let key_style = Style::new().blue().bold();
+        expected.set_style(Rect::new(14, 0, 22, 1), title_style);
+        expected.set_style(Rect::new(28, 1, 1, 1), counter_style);
+        expected.set_style(Rect::new(13, 3, 6, 1), key_style);
+        expected.set_style(Rect::new(30, 3, 7, 1), key_style);
+        expected.set_style(Rect::new(43, 3, 4, 1), key_style);
+
+        // note ratatui also has an assert_buffer_eq! macro that can be used to
+        // compare buffers and display the differences in a more readable way
+        assert_eq!(buf, expected);
+    } */
+
+    #[test]
+    fn handle_key_event() -> Result<()> {
+        let mut app = App::default();
+        app.handle_key_event(KeyCode::Right.into()).unwrap();
+        assert_eq!(app.counter, 1);
+
+        app.handle_key_event(KeyCode::Left.into()).unwrap();
+        assert_eq!(app.counter, 0);
+
+        let mut app = App::default();
+        app.handle_key_event(KeyCode::Char('q').into()).unwrap();
+        assert_eq!(app.exit, true);
+
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "attempt to subtract with overflow")]
+    fn handle_key_event_panic() {
+        let mut app = App::default();
+        let _ = app.handle_key_event(KeyCode::Left.into());
+    }
+
+    #[test]
+    fn handle_key_event_overflow() {
+        let mut app = App::default();
+        assert!(app.handle_key_event(KeyCode::Right.into()).is_ok());
+        assert!(app.handle_key_event(KeyCode::Right.into()).is_ok());
+        assert_eq!(
+            app.handle_key_event(KeyCode::Right.into())
+                .unwrap_err()
+                .to_string(),
+            "counter overflow"
+        );
+    }
+}
