@@ -54,23 +54,6 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn new(
-        name: String,
-        status: Status,
-        regex: String,
-        rule: Rules,
-        key_code: String,
-    ) -> Result<Self, regex::Error> {
-        Ok(Filter {
-            name,
-            status,
-            regex: Regex::new(&regex)?,
-            rule,
-            key_code,
-            is_on: true,
-        })
-    }
-
     pub fn toggle(&mut self) {
         self.is_on = !self.is_on;
     }

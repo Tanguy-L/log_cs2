@@ -1,35 +1,23 @@
-use color_eyre::eyre::WrapErr;
+use color_eyre::eyre::{Ok, WrapErr};
 use color_eyre::Result;
-use ratatui::prelude::*;
-use ratatui::{
-    buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Alignment, Rect},
-    prelude::Style,
-    symbols::border,
-    text::Line,
-    widgets::{
-        block::{Position, Title},
-        Block, Paragraph, Widget,
-    },
-    Frame,
-};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 
 use serde_json;
 use std::fs;
 use std::time::{Duration, Instant};
-
 mod filters;
 use filters::Status;
 use filters::{Filter, ListFilter};
 mod errors;
 mod tui;
-
+mod ui;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
+use std::env;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::Receiver;
+
 #[derive(Debug)]
 pub struct LogCS2 {
     value: String,
@@ -46,17 +34,19 @@ pub struct App {
     file_filters_path: String,
     last_events: HashMap<PathBuf, Instant>,
     debounce_duration: Duration,
+    scroll: u16,
 }
 
 impl Default for App {
     fn default() -> Self {
         Self {
+            scroll: 0,
             filters: Vec::new(),
             exit: false,
             logs: vec![],
             last_check: Instant::now(),
             file_path: "../cs2server.log".to_string(),
-            file_filters_path: "./filters.json".to_string(),
+            file_filters_path: "src/filters.json".to_string(),
             last_events: HashMap::new(),
             debounce_duration: Duration::from_millis(100),
         }
@@ -80,8 +70,10 @@ impl App {
         let mut last_tick = Instant::now();
 
         while !self.exit {
+            self.on_tick();
+
             self.check_file_changes(&rx);
-            terminal.draw(|frame| self.render_frame(frame))?;
+            terminal.draw(|frame| ui::ui(&self, frame))?;
 
             let timeout = tick_rate
                 .checked_sub(last_tick.elapsed())
@@ -100,10 +92,14 @@ impl App {
         Ok(())
     }
 
+    fn on_tick(&mut self) {
+        self.scroll = (self.scroll + 1) % 10;
+    }
+
     fn check_file_changes(&mut self, rx: &Receiver<notify::Result<notify::Event>>) {
-        while let Ok(result) = rx.try_recv() {
+        while let std::result::Result::Ok(result) = rx.try_recv() {
             match result {
-                Ok(event) => {
+                std::result::Result::Ok(event) => {
                     for path in event.paths {
                         let now = Instant::now();
                         if let Some(last_event_time) = self.last_events.get(&path) {
@@ -146,7 +142,14 @@ impl App {
 
     fn init_filters(&mut self) {
         // Open the file in read-only mode with buffer.
-        let file = fs::File::open(&self.file_filters_path).unwrap();
+        let file = fs::File::open(&self.file_filters_path).unwrap_or_else(|e| {
+            let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("unknown"));
+            panic!(
+                "Failed to open filters file. Error: {}. Current directory: {}",
+                e,
+                current_dir.display()
+            )
+        });
 
         // Read the JSON contents of the file as an instance of `User`.
         let json: ListFilter = serde_json::from_reader(file).unwrap();
@@ -154,10 +157,6 @@ impl App {
         for filter in json.filters {
             self.filters.push(filter);
         }
-    }
-
-    fn render_frame(&self, frame: &mut Frame) {
-        frame.render_widget(self, frame.size());
     }
 
     fn exit(&mut self) {
@@ -191,85 +190,6 @@ impl App {
             _ => {}
         }
         Ok(())
-    }
-}
-
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Title::from(vec![
-            " ".into(),
-            "P".bold().blue(),
-            "L".bold().yellow(),
-            "G".red().bold(),
-            " Console".bold().light_red(),
-            "".into(),
-        ]);
-        let logs_lines: Vec<Line> = self
-            .logs
-            .iter()
-            .map(|x| Line::styled(x.value.clone(), get_style(x.status.clone())))
-            .collect();
-
-        let mut string_instructions = vec![" ".into()];
-
-        for filter in &self.filters {
-            string_instructions.push(filter.name.clone().bold());
-            string_instructions.push(" ".into());
-            if filter.is_on {
-                string_instructions.push("Y".bold().green());
-            } else {
-                string_instructions.push("N".bold().red());
-            }
-            string_instructions.push(" ".into());
-
-            string_instructions.push("<".bg(Color::White).black());
-            string_instructions.push(
-                filter
-                    .key_code
-                    .clone()
-                    .to_uppercase()
-                    .to_string()
-                    .bold()
-                    .black()
-                    .bg(Color::White),
-            );
-            string_instructions.push(">".bg(Color::White).black());
-            string_instructions.push(" ".into());
-        }
-        string_instructions.push("Quit".bold());
-        string_instructions.push(" ".into());
-
-        string_instructions.push("<".bg(Color::White).black());
-        string_instructions.push("Q".to_string().bold().black().bg(Color::White));
-        string_instructions.push(">".bg(Color::White).black());
-        string_instructions.push(" ".into());
-
-        let instructions = Title::from(Line::from(string_instructions));
-        let block = Block::bordered()
-            .title(title.alignment(Alignment::Center))
-            .bold()
-            .title(
-                instructions
-                    .alignment(Alignment::Center)
-                    .position(Position::Bottom),
-            )
-            .border_set(border::ROUNDED);
-
-        Paragraph::new(logs_lines)
-            .left_aligned()
-            .block(block)
-            .render(area, buf);
-    }
-}
-
-fn get_style(status: Status) -> ratatui::prelude::Style {
-    match status {
-        Status::Infos => Style::new().blue(),
-        Status::Warning => Style::new().yellow(),
-        Status::Error => Style::new().red(),
-        Status::Custom => Style::new().green(),
-        Status::Custom2 => Style::new().light_magenta(),
-        Status::Custom3 => Style::new().cyan(),
     }
 }
 

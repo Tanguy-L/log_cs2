@@ -35,6 +35,9 @@ A filter looks like this in filters.json
 - [ ] Define the path of file log on launch
 - [ ] Refactor this bad boy
 - [ ] Use the OneLine rule
-- [ ] Use .env WTF !
 
 That pretty much it for now !
+
+### Current
+
+Refactoring en cours
